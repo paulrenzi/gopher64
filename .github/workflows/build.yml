@@ -21,6 +21,7 @@ jobs:
         with:
           target: x86_64-unknown-linux-gnu
           rustflags: ""
+          cache: false  # Disable Cargo cache to prevent stale binaries
       - name: Set LLVM_VERSION
         run: echo "LLVM_VERSION=$(rustc --version --verbose | grep "LLVM version" | cut -d':' -f2 | xargs)" >> $GITHUB_ENV
       - name: Install SDL Dependencies
