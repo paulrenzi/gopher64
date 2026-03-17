@@ -58,3 +58,27 @@ jobs:
         with:
           name: gopher64-dynamic-sdl3-linux-x86_64
           path: output/
+      - name: Package release tarball
+        run: |
+          cd output
+          tar czf ../gopher64-linux-x86_64.tar.gz gopher64 libSDL3.so.0 libSDL3_ttf.so.0
+          md5sum gopher64 > ../gopher64-linux-x86_64.md5
+          echo "=== Tarball ==="
+          ls -la ../gopher64-linux-x86_64.tar.gz
+          echo "=== MD5 ==="
+          cat ../gopher64-linux-x86_64.md5
+      - name: Publish to standalone-x86_64 release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Delete existing release (if any) and recreate with fresh assets.
+          # This ensures the release timestamp changes on every build,
+          # which Outbreak's installer uses as a cache invalidation key.
+          gh release delete standalone-x86_64 --yes 2>/dev/null || true
+          git tag -f standalone-x86_64
+          git push origin standalone-x86_64 --force
+          gh release create standalone-x86_64 \
+            --title "Gopher64 (Dynamic SDL3)" \
+            --notes "Auto-built from $(git rev-parse --short HEAD). $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            gopher64-linux-x86_64.tar.gz \
+            gopher64-linux-x86_64.md5
