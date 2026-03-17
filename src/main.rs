@@ -92,6 +92,11 @@ struct Args {
         help = "Room port to join on the netplay server (default: 45001)"
     )]
     netplay_room_port: Option<i32>,
+    #[arg(
+        long,
+        help = "Host mode: create a room and auto-start when a player joins. Use with --netplay-server."
+    )]
+    netplay_host: bool,
 }
 
 fn main() -> std::io::Result<()> {
@@ -113,16 +118,25 @@ fn main() -> std::io::Result<()> {
         let file_path = std::path::Path::new(&game);
 
         if let Some(server_addr) = args.netplay_server {
-            // CLI netplay mode: skip GUI entirely, auto-join room
+            // CLI netplay mode: skip GUI entirely
             let fullscreen = args.fullscreen;
             let player_name = args.netplay_name;
-            let room_port = args.netplay_room_port;
             let rom_path = file_path.to_path_buf();
+            let is_host = args.netplay_host;
+            let room_port = args.netplay_room_port;
             let handle = runtime.spawn(async move {
-                if let Err(e) =
-                    cli_netplay::run(&server_addr, &rom_path, fullscreen, player_name, room_port)
-                        .await
-                {
+                let result = if is_host {
+                    cli_netplay::run_host(
+                        &server_addr, &rom_path, fullscreen, player_name, None,
+                    )
+                    .await
+                } else {
+                    cli_netplay::run(
+                        &server_addr, &rom_path, fullscreen, player_name, room_port,
+                    )
+                    .await
+                };
+                if let Err(e) = result {
                     eprintln!("[netplay] Error: {e}");
                     std::process::exit(1);
                 }
