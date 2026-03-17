@@ -18,8 +18,8 @@ serde-big-array = "0.5"
 slint = { version = "1.15", default-features = false, features = ["compat-1-2", "std", "backend-winit", "renderer-skia"] }
 open = "5.3"
 sha2 = "0.10"
-sdl3-sys = { version = "0.6", features = ["build-from-source-static"] }
-sdl3-ttf-sys = { version = "0.6", features = ["build-from-source-static", "no-sdlttf-harfbuzz", "no-sdlttf-plutosvg"] }
+sdl3-sys = { version = "0.6", features = ["build-from-source"] }
+sdl3-ttf-sys = { version = "0.6", features = ["build-from-source", "no-sdlttf-harfbuzz", "no-sdlttf-plutosvg"] }
 rfd = "0.17"
 tokio = {version = "1.46", features = ["rt-multi-thread", "macros", "fs"] }
 spin_sleep = "1.3"

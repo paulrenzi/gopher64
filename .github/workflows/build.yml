@@ -1,45 +1,29 @@
-name: Rust
+name: Build Gopher64 (Dynamic SDL3)
 permissions:
-  contents: read
+  contents: write
 
 on:
   push:
     branches: ["main"]
-    tags:
-      - "v*"
-  pull_request:
-    branches: ["main"]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build-linux:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-            arch: linux-x86_64
-            llvm: X64
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            arch: linux-aarch64
-            llvm: ARM64
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          target: ${{ matrix.target }}
+          target: x86_64-unknown-linux-gnu
           rustflags: ""
       - name: Set LLVM_VERSION
         run: echo "LLVM_VERSION=$(rustc --version --verbose | grep "LLVM version" | cut -d':' -f2 | xargs)" >> $GITHUB_ENV
       - name: Install SDL Dependencies
-        # https://wiki.libsdl.org/SDL3/README-linux#build-dependencies
         uses: awalsh128/cache-apt-pkgs-action@v1
         with:
           packages: build-essential git make \
@@ -49,119 +33,29 @@ jobs:
             libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev \
             libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev fcitx-libs-dev \
             libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev libfreetype-dev libfontconfig-dev
-          version: ${{ matrix.target }}-1.0
+          version: x86_64-unknown-linux-gnu-1.0
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v2
         with:
           version: ${{ env.LLVM_VERSION }}
-          force-url: https://github.com/llvm/llvm-project/releases/download/llvmorg-${{ env.LLVM_VERSION }}/LLVM-${{ env.LLVM_VERSION }}-Linux-${{ matrix.llvm }}.tar.xz
+          force-url: https://github.com/llvm/llvm-project/releases/download/llvmorg-${{ env.LLVM_VERSION }}/LLVM-${{ env.LLVM_VERSION }}-Linux-X64.tar.xz
       - name: Build
+        run: cargo build --release -v --target=x86_64-unknown-linux-gnu
+      - name: Collect artifacts
         run: |
-          cargo build --release -v --target=${{ matrix.target }}
-          mkdir output
-          cp target/${{ matrix.target }}/release/gopher64 output/gopher64-${{ matrix.arch }}
-        env:
-          NETPLAY_ID: ${{ secrets.NETPLAY_ID }}
-      - name: Upload file
+          mkdir -p output
+          cp target/x86_64-unknown-linux-gnu/release/gopher64 output/
+          # Find and copy the dynamically-linked SDL3 shared libraries
+          find target/x86_64-unknown-linux-gnu/release/build/ -name "libSDL3.so*" -not -name "*.a" | head -1 | xargs -I{} cp {} output/libSDL3.so.0
+          find target/x86_64-unknown-linux-gnu/release/build/ -name "libSDL3_ttf.so*" -not -name "*.a" | head -1 | xargs -I{} cp {} output/libSDL3_ttf.so.0
+          echo "=== Output contents ==="
+          ls -la output/
+          echo "=== Verify dynamic linking ==="
+          ldd output/gopher64 | grep -i sdl || echo "SDL not in ldd (may use RPATH)"
+          readelf -d output/gopher64 | grep -i -E "NEEDED|RPATH|RUNPATH" || true
+      - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: gopher64-${{ matrix.arch }}
-          path: output/gopher64-${{ matrix.arch }}
-          archive: false
-
-  build-windows:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-2025
-            target: x86_64-pc-windows-msvc
-            arch: windows-x86_64
-            llvm: win64
-          #- os: windows-11-arm
-          #  target: aarch64-pc-windows-msvc
-          #  arch: windows-aarch64
-          #  llvm: woa64
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          target: ${{ matrix.target }}
-          rustflags: ""
-      - name: Set LLVM_VERSION
-        run: |
-          $llvm_version = rustc --version --verbose | Select-String "LLVM version" | ForEach-Object { $_.Line.Split(":")[1].Trim() }
-          echo "LLVM_VERSION=$llvm_version" >> $env:GITHUB_ENV
-      - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@v2
-        with:
-          version: ${{ env.LLVM_VERSION }}
-          force-url: https://github.com/llvm/llvm-project/releases/download/llvmorg-${{ env.LLVM_VERSION }}/LLVM-${{ env.LLVM_VERSION }}-${{ matrix.llvm }}.exe
-      - name: Build
-        run: |
-          cargo build --release -v --target=${{ matrix.target }}
-          mkdir output
-          cp target/${{ matrix.target }}/release/gopher64.exe output/gopher64-${{ matrix.arch }}.exe
-        env:
-          CC: clang-cl
-          CXX: clang-cl
-          NETPLAY_ID: ${{ secrets.NETPLAY_ID }}
-      - name: Upload unsigned artifact
-        id: upload-unsigned-artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: gopher64-${{ matrix.arch }}
-          path: output/gopher64-${{ matrix.arch }}.exe
-          archive: false
-      - name: SignPath
-        if: ${{ github.ref_type == 'tag' }}
-        uses: signpath/github-action-submit-signing-request@v2.0
-        with:
-          api-token: "${{ secrets.SIGNPATH_API_TOKEN }}"
-          organization-id: "${{ secrets.SIGNPATH_ORG_ID }}"
-          project-slug: "gopher64"
-          artifact-configuration-slug: "gopher64-${{ matrix.arch }}"
-          signing-policy-slug: "release-signing"
-          github-artifact-id: "${{ steps.upload-unsigned-artifact.outputs.artifact-id }}"
-          wait-for-completion: false
-
-  build-macos:
-    runs-on: macos-15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: aarch64-apple-darwin
-            arch: mac-aarch64
-            llvm: ARM64
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          target: ${{ matrix.target }}
-          rustflags: ""
-      - name: Set LLVM_VERSION
-        run: echo "LLVM_VERSION=$(rustc --version --verbose | grep "LLVM version" | cut -d':' -f2 | xargs)" >> $GITHUB_ENV
-      - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@v2
-        with:
-          version: ${{ env.LLVM_VERSION }}
-          force-url: https://github.com/llvm/llvm-project/releases/download/llvmorg-${{ env.LLVM_VERSION }}/LLVM-${{ env.LLVM_VERSION }}-macOS-${{ matrix.llvm }}.tar.xz
-      - name: Build
-        run: |
-          cargo build --release -v --target=${{ matrix.target }}
-          mkdir output
-          cp target/${{ matrix.target }}/release/gopher64 output/gopher64-${{ matrix.arch }}
-        env:
-          NETPLAY_ID: ${{ secrets.NETPLAY_ID }}
-      - name: Upload file
-        uses: actions/upload-artifact@v7
-        with:
-          name: gopher64-${{ matrix.arch }}
-          path: output/gopher64-${{ matrix.arch }}
+          name: gopher64-dynamic-sdl3-linux-x86_64
+          path: output/
           archive: false
