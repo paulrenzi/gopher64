@@ -58,4 +58,3 @@ jobs:
         with:
           name: gopher64-dynamic-sdl3-linux-x86_64
           path: output/
-          archive: false
