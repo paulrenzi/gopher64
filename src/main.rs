@@ -4,6 +4,7 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod cheats;
+mod cli_netplay;
 mod device;
 mod netplay;
 mod savestates;
@@ -72,6 +73,25 @@ struct Args {
         help = "Clear all input profile bindings and controller assignments"
     )]
     clear_input_bindings: bool,
+    #[arg(
+        short = 'n',
+        long,
+        value_name = "HOST:PORT",
+        help = "Connect to a netplay server and auto-join (e.g., 192.168.0.100:45000). Requires a ROM argument."
+    )]
+    netplay_server: Option<String>,
+    #[arg(
+        long,
+        value_name = "NAME",
+        help = "Player name for netplay (default: Player)"
+    )]
+    netplay_name: Option<String>,
+    #[arg(
+        long,
+        value_name = "PORT",
+        help = "Room port to join on the netplay server (default: 45001)"
+    )]
+    netplay_room_port: Option<i32>,
 }
 
 fn main() -> std::io::Result<()> {
@@ -91,35 +111,54 @@ fn main() -> std::io::Result<()> {
     let args = Args::parse();
     if let Some(game) = args.game {
         let file_path = std::path::Path::new(&game);
-        let Some(rom_contents) = device::get_rom_contents(file_path) else {
-            return Err(Error::other(format!(
-                "Could not read ROM file: {}",
-                file_path.display()
-            )));
-        };
 
-        let handle = runtime.spawn(async move {
-            let mut device = device::Device::new();
-            let overclock = device.ui.config.emulation.overclock;
-            let disable_expansion_pak = device.ui.config.emulation.disable_expansion_pak;
-
-            let game_cheats = {
-                let game_crc = ui::storage::get_game_crc(&rom_contents);
-                let cheats = ui::config::Cheats::new();
-                cheats.cheats.get(&game_crc).cloned().unwrap_or_default()
+        if let Some(server_addr) = args.netplay_server {
+            // CLI netplay mode: skip GUI entirely, auto-join room
+            let fullscreen = args.fullscreen;
+            let player_name = args.netplay_name;
+            let room_port = args.netplay_room_port;
+            let rom_path = file_path.to_path_buf();
+            let handle = runtime.spawn(async move {
+                if let Err(e) =
+                    cli_netplay::run(&server_addr, &rom_path, fullscreen, player_name, room_port)
+                        .await
+                {
+                    eprintln!("[netplay] Error: {e}");
+                    std::process::exit(1);
+                }
+            });
+            runtime.block_on(handle).unwrap()
+        } else {
+            let Some(rom_contents) = device::get_rom_contents(file_path) else {
+                return Err(Error::other(format!(
+                    "Could not read ROM file: {}",
+                    file_path.display()
+                )));
             };
-            device::run_game(
-                &mut device,
-                rom_contents,
-                ui::gui::GameSettings {
-                    fullscreen: args.fullscreen,
-                    overclock,
-                    disable_expansion_pak,
-                    cheats: game_cheats,
-                },
-            );
-        });
-        runtime.block_on(handle).unwrap()
+
+            let handle = runtime.spawn(async move {
+                let mut device = device::Device::new();
+                let overclock = device.ui.config.emulation.overclock;
+                let disable_expansion_pak = device.ui.config.emulation.disable_expansion_pak;
+
+                let game_cheats = {
+                    let game_crc = ui::storage::get_game_crc(&rom_contents);
+                    let cheats = ui::config::Cheats::new();
+                    cheats.cheats.get(&game_crc).cloned().unwrap_or_default()
+                };
+                device::run_game(
+                    &mut device,
+                    rom_contents,
+                    ui::gui::GameSettings {
+                        fullscreen: args.fullscreen,
+                        overclock,
+                        disable_expansion_pak,
+                        cheats: game_cheats,
+                    },
+                );
+            });
+            runtime.block_on(handle).unwrap()
+        }
     } else if std::env::args().count() > 1 {
         let mut ui = ui::Ui::new();
 
