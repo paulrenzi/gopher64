@@ -192,20 +192,21 @@ pub async fn run(
         return Err(format!("Begin game rejected: {}", err_msg).into());
     }
 
-    // Determine player number from player_names
-    let player_names = begin_reply
-        .player_names
-        .as_ref()
-        .ok_or("reply_begin_game missing player_names")?;
-
-    let mut player_number: Option<u8> = None;
-    for (i, name) in player_names.iter().enumerate() {
-        if name == &player_name {
-            player_number = Some(i as u8);
-            break;
+    // Determine player number from player_names (if provided by server)
+    let player_number: u8 = if let Some(ref names) = begin_reply.player_names {
+        let mut found: Option<u8> = None;
+        for (i, name) in names.iter().enumerate() {
+            if name == &player_name {
+                found = Some(i as u8);
+                break;
+            }
         }
-    }
-    let player_number = player_number.ok_or("Could not determine player number from player_names")?;
+        found.unwrap_or(1) // default to player 2 if name not found
+    } else {
+        // Server didn't send player_names — default to player 2 (joiner)
+        eprintln!("[netplay] No player_names in reply_begin_game, defaulting to player 2");
+        1
+    };
 
     eprintln!(
         "[netplay] Game starting! Player number: {}",
