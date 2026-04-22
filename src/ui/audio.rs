@@ -22,13 +22,15 @@ pub fn init_game_audio(ui: &mut ui::Ui, frequency: u64) {
         )
     };
     if ui.audio.audio_stream.is_null() {
-        panic!("Could not create audio stream");
+        eprintln!("[WARN]: Could not create audio stream — continuing without audio");
+        return;
     }
     if !unsafe {
         sdl3_sys::audio::SDL_SetAudioStreamGain(ui.audio.audio_stream, ui.audio.gain)
             && sdl3_sys::audio::SDL_ResumeAudioStreamDevice(ui.audio.audio_stream)
     } {
-        panic!("Could not resume audio stream");
+        eprintln!("[WARN]: Could not resume audio stream — continuing without audio");
+        ui.audio.audio_stream = std::ptr::null_mut();
     }
 }
 
@@ -46,6 +48,9 @@ pub fn close_game_audio(ui: &mut ui::Ui) {
 }
 
 pub fn lower_audio_volume(ui: &mut ui::Ui) {
+    if ui.audio.audio_stream.is_null() {
+        return;
+    }
     unsafe {
         ui.audio.gain = sdl3_sys::audio::SDL_GetAudioStreamGain(ui.audio.audio_stream) - 0.05;
         if ui.audio.gain < 0.0 {
@@ -57,6 +62,9 @@ pub fn lower_audio_volume(ui: &mut ui::Ui) {
 }
 
 pub fn raise_audio_volume(ui: &mut ui::Ui) {
+    if ui.audio.audio_stream.is_null() {
+        return;
+    }
     unsafe {
         ui.audio.gain = sdl3_sys::audio::SDL_GetAudioStreamGain(ui.audio.audio_stream) + 0.05;
         if ui.audio.gain > 2.0 {
@@ -68,7 +76,7 @@ pub fn raise_audio_volume(ui: &mut ui::Ui) {
 }
 
 fn adjust_audio_frequency(device: &device::Device, frequency: f32) {
-    if !device.vi.enable_speed_limiter {
+    if !device.vi.enable_speed_limiter || device.ui.audio.audio_stream.is_null() {
         return;
     }
 
@@ -120,7 +128,7 @@ pub fn play_audio(device: &device::Device, dram_addr: usize, length: u64) {
                 silence_buffer.len() as i32,
             )
         } {
-            panic!("Could not play audio");
+            return;
         }
         /*
         println!(
@@ -139,7 +147,7 @@ pub fn play_audio(device: &device::Device, dram_addr: usize, length: u64) {
                 primary_buffer.len() as i32 * 2,
             )
         } {
-            panic!("Could not play audio");
+            return;
         }
     } else {
         /*
