@@ -359,18 +359,30 @@ pub async fn run_host(
         game_port
     );
 
-    // Wait for any incoming message — when a player joins, the server notifies us.
-    // We listen for up to 5 minutes, then auto-begin regardless.
+    // Wait for a player to join. The Go server sends reply_players when the
+    // room list changes (player join/leave). The first reply_players after
+    // room creation is the initial list (just the host). Subsequent ones
+    // indicate a change — a player joined or left. We skip the first and
+    // break on the second.
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(300);
+    let mut seen_initial_players = false;
     loop {
         match tokio::time::timeout_at(deadline, read.next()).await {
             Ok(Some(Ok(msg))) => {
                 let data = msg.into_data();
                 if let Ok(message) = serde_json::from_slice::<NetplayMessage>(&data) {
                     eprintln!("[netplay-host] Received: {}", message.message_type);
-                    // Any message from the server after room creation likely means
-                    // a player joined. Send begin_game.
-                    break;
+                    if message.message_type == "reply_players" {
+                        if !seen_initial_players {
+                            seen_initial_players = true;
+                            eprintln!("[netplay-host] Initial room list received — waiting for player join...");
+                            continue;
+                        }
+                        eprintln!("[netplay-host] Player change detected — starting game");
+                        break;
+                    }
+                    // Ignore other message types (stats, pings, etc.)
+                    continue;
                 }
             }
             Ok(Some(Err(e))) => {
