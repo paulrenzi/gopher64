@@ -359,30 +359,73 @@ pub async fn run_host(
         game_port
     );
 
-    // Wait for a player to join. The Go server sends reply_players when the
-    // room list changes (player join/leave). The first reply_players after
-    // room creation is the initial list (just the host). Subsequent ones
-    // indicate a change — a player joined or left. We skip the first and
-    // break on the second.
+    // Wait for a player to join by polling the Go server for the player list.
+    // The Go server does NOT push reply_players on join — we must poll with
+    // request_players periodically and compare the count.
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(300);
-    let mut seen_initial_players = false;
+    let poll_interval = std::time::Duration::from_secs(3);
+    let mut initial_count: Option<usize> = None;
+
     loop {
-        match tokio::time::timeout_at(deadline, read.next()).await {
+        // Send request_players
+        let request_players = NetplayMessage {
+            message_type: "request_players".to_string(),
+            player_name: None,
+            client_sha: None,
+            netplay_version: None,
+            emulator: None,
+            accept: None,
+            message: None,
+            rooms: None,
+            player_names: None,
+            auth_time: None,
+            auth: None,
+            room: Some(NetplayRoom {
+                room_name: None,
+                password: None,
+                game_name: None,
+                md5: None,
+                protected: None,
+                port: Some(game_port),
+                features: None,
+                buffer_target: None,
+            }),
+        };
+        let _ = write
+            .send(Message::Binary(Bytes::from(
+                serde_json::to_vec(&request_players).unwrap(),
+            )))
+            .await;
+
+        // Read response with timeout
+        match tokio::time::timeout(poll_interval, read.next()).await {
             Ok(Some(Ok(msg))) => {
                 let data = msg.into_data();
                 if let Ok(message) = serde_json::from_slice::<NetplayMessage>(&data) {
-                    eprintln!("[netplay-host] Received: {}", message.message_type);
                     if message.message_type == "reply_players" {
-                        if !seen_initial_players {
-                            seen_initial_players = true;
-                            eprintln!("[netplay-host] Initial room list received — waiting for player join...");
-                            continue;
+                        // Count non-empty player names
+                        let count = message
+                            .player_names
+                            .as_ref()
+                            .map(|names| names.iter().filter(|n| !n.is_empty()).count())
+                            .unwrap_or(0);
+                        eprintln!("[netplay-host] Players: {}", count);
+                        if let Some(init) = initial_count {
+                            if count > init {
+                                eprintln!(
+                                    "[netplay-host] Player joined ({} → {}) — starting game",
+                                    init, count
+                                );
+                                break;
+                            }
+                        } else {
+                            initial_count = Some(count);
+                            eprintln!(
+                                "[netplay-host] Initial player count: {} — polling for joins...",
+                                count
+                            );
                         }
-                        eprintln!("[netplay-host] Player change detected — starting game");
-                        break;
                     }
-                    // Ignore other message types (stats, pings, etc.)
-                    continue;
                 }
             }
             Ok(Some(Err(e))) => {
@@ -392,8 +435,12 @@ pub async fn run_host(
                 return Err("WebSocket connection closed".into());
             }
             Err(_) => {
-                eprintln!("[netplay-host] Timeout waiting for players — starting anyway");
-                break;
+                // Poll timeout — check deadline
+                if tokio::time::Instant::now() >= deadline {
+                    eprintln!("[netplay-host] Timeout waiting for players — starting anyway");
+                    break;
+                }
+                // Otherwise loop and poll again
             }
         }
     }
