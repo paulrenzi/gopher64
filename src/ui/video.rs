@@ -1,6 +1,21 @@
 #![allow(non_snake_case)]
 include!(concat!(env!("OUT_DIR"), "/parallel_bindings.rs"));
 use crate::{device, ui};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static FIRST_FRAME_LOGGED: AtomicBool = AtomicBool::new(false);
+
+fn log_first_frame_once() {
+    if FIRST_FRAME_LOGGED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0);
+    let path = format!("/tmp/g64-first-frame-{}", std::process::id());
+    let _ = std::fs::write(&path, format!("{:.3}\n", now));
+}
 
 pub fn init(device: &mut device::Device) {
     ui::sdl_init(sdl3_sys::init::SDL_INIT_VIDEO);
@@ -94,6 +109,7 @@ pub fn close(ui: &ui::Ui) {
 
 pub fn update_screen() {
     unsafe { rdp_update_screen() }
+    log_first_frame_once();
 }
 
 pub fn render_frame() {
